@@ -1,0 +1,83 @@
+package MALA_Communication_System
+public
+    with SEI;
+
+    -- Definição do Sistema de Comunicação
+    system communication_system
+        features
+            ethernet_out: out data port Ethernet_Frame;  -- Porta de saída Ethernet para comunicação com outros subsistemas
+            ethernet_in: in data port Ethernet_Frame;    -- Porta de entrada Ethernet para recebimento de dados
+        properties
+            SEI::BlackboardCapacity => 1 Gbyte;  -- Capacidade total do blackboard central
+    end communication_system;
+
+    -- Definição do Data Frame para Ethernet
+    data Ethernet_Frame
+        properties
+            Data_Size => 1500 bytes;  -- Tamanho típico de um quadro Ethernet
+    end Ethernet_Frame;
+
+    -- Definição do Processador Intel Atom x5-Z8350
+    processor Intel_Atom_x5_Z8350
+        features
+            eth: requires bus access Ethernet_Bus;  -- Acesso ao barramento Ethernet
+        properties
+            SEI::MIPSCapacity => 15.0 mips;  -- Capacidade do processador
+    end Intel_Atom_x5_Z8350;
+
+    -- Definição do Barramento Ethernet
+    bus Ethernet_Bus
+        properties
+            SEI::BandWidthCapacity => 100.0 Mbps;  -- Capacidade do barramento Ethernet
+            SEI::BandWidthBudget => 80.0 Mbps;  -- Largura de banda alocada para comunicação
+    end Ethernet_Bus;
+
+    -- Definição do Thread de Gerenciamento de Comunicação
+    thread communication_management_thread
+        features
+            input_frame: in data port Ethernet_Frame;   -- Entrada de dados do quadro Ethernet
+            output_frame: out data port Ethernet_Frame; -- Saída de dados para o quadro Ethernet
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para garantir sincronia
+            Period => 10ms;  -- Período de execução do thread
+            Stack_Size => 16 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 5ms .. 15ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 4.0 mips;  -- Capacidade MIPS alocada para o thread
+    end communication_management_thread;
+
+    -- Definição do Processo de Comunicação
+    process communication_process
+        features
+            eth_input: in data port Ethernet_Frame;   -- Porta de entrada Ethernet para o processo
+            eth_output: out data port Ethernet_Frame; -- Porta de saída Ethernet do processo
+        properties
+            SEI::MIPSBudget => 2.0 mips;  -- Orçamento de MIPS para o processo
+    end communication_process;
+
+    -- Implementação do Processo de Comunicação
+    process implementation communication_process.impl
+        subcomponents
+            comm_thread: thread communication_management_thread;  -- Subcomponente thread de gerenciamento
+        connections
+            data_flow_in: port eth_input -> comm_thread.input_frame;  -- Conexão de entrada de dados
+            data_flow_out: port comm_thread.output_frame -> eth_output; -- Conexão de saída de dados
+    end communication_process.impl;
+
+    -- Implementação Completa do Sistema de Comunicação
+    system implementation communication_system.impl
+        subcomponents
+            proc: processor Intel_Atom_x5_Z8350;  -- Subcomponente processador
+            mem: memory Communication_Memory;  -- Memória para buffer
+            eth_bus: bus Ethernet_Bus;  -- Barramento Ethernet
+            comm_process: process communication_process.impl;  -- Processo de comunicação
+        connections
+            proc_to_comm_process: bus access proc.eth <-> comm_process.eth_input;  -- Conexão entre processador e processo de comunicação
+            comm_process_to_bus: port comm_process.eth_output -> eth_bus;  -- Conexão do processo de comunicação ao barramento
+        properties
+            Actual_Connection_Binding => (reference (eth_bus)) applies to proc_to_comm_process, comm_process_to_bus;
+            Scheduling_Protocol => (TDMA) applies to eth_bus;  -- Protocolo de agendamento TDMA para o barramento
+            Communication_Properties::Output_Rate => [Value_Range => 10.0 .. 200.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.eth_output;
+    end communication_system.impl;
+
+end MALA_Communication_System;

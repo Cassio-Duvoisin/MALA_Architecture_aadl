@@ -1,0 +1,104 @@
+package MALA_Motion_System
+public
+    with SEI;
+    with MALA_Communication_System;
+    with MALA_Power_System;
+    with MALA_Perception_System;
+
+    -- Definição do Sistema de Movimentação
+    system motion_system
+        features
+            can_in: in data port Motion_Command;  -- Porta de entrada para comandos via CAN
+            can_out: out data port Motion_Command;  -- Porta de saída para enviar comandos aos atuadores via CAN
+            eth_in: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::BlackboardCapacity => 256 Mbyte;  -- Capacidade do blackboard para dados de movimentação e rotas
+    end motion_system;
+
+    -- Definição do Data Frame para Comandos de Movimentação
+    data Motion_Command
+        properties
+            Data_Size => 128 bytes;  -- Tamanho típico para comandos de movimentação
+    end Motion_Command;
+
+    -- Definição do Processador ARM Cortex-A53
+    processor ARM_Cortex_A53
+        features
+            can: requires bus access CAN_Bus;  -- Acesso ao barramento CAN
+        properties
+            SEI::MIPSCapacity => 15.0 mips;  -- Capacidade do processador em MIPS
+    end ARM_Cortex_A53;
+
+    -- Definição do Barramento CAN
+    bus CAN_Bus
+        properties
+            SEI::BandWidthCapacity => 1.0 Mbps;  -- Capacidade do barramento CAN
+            SEI::BandWidthBudget => 0.8 Mbps;  -- Largura de banda alocada para comunicação com atuadores
+    end CAN_Bus;
+
+    -- Definição do Thread de Monitoramento de Rotas
+    thread route_monitoring_thread
+        features
+            route_data_out: out data port Motion_Command;  -- Porta de saída para comandos de rota ajustados
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para ajustar as rotas
+            Period => 10ms;  -- Período de execução do thread
+            Stack_Size => 8 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 5ms .. 15ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 4.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 1;  -- Prioridade alta para o ajuste de rotas
+    end route_monitoring_thread;
+
+    -- Definição do Thread de Controle de Atuadores
+    thread actuator_control_thread
+        features
+            actuator_command_out: out data port Motion_Command;  -- Porta de saída para enviar comandos aos atuadores
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para controle de atuadores
+            Period => 15ms;  -- Período de execução do thread
+            Stack_Size => 12 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 10ms .. 20ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 5.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 2;  -- Prioridade intermediária
+    end actuator_control_thread;
+
+    -- Definição do Processo de Movimentação
+    process motion_process
+        features
+            can_input: in data port Motion_Command;  -- Porta de entrada CAN para o processo
+            can_output: out data port Motion_Command; -- Porta de saída CAN do processo
+            eth_input: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::MIPSBudget => 8.0 mips;  -- Orçamento de MIPS para o processo
+    end motion_process;
+
+    -- Implementação do Processo de Movimentação
+    process implementation motion_process.impl
+        subcomponents
+            route_thread: thread route_monitoring_thread;  -- Subcomponente thread de monitoramento de rotas
+            actuator_thread: thread actuator_control_thread;  -- Subcomponente thread de controle de atuadores
+        connections
+            route_data_flow_out: port route_thread.route_data_out -> can_output;  -- Conexão de saída de comandos de rota ajustados para o barramento CAN
+            actuator_command_flow_out: port actuator_thread.actuator_command_out -> can_output;  -- Conexão de saída de comandos de atuadores para o barramento CAN
+            eth_data_flow_in: port eth_input -> route_thread.route_data_out;  -- Conexão de entrada de dados Ethernet para monitoramento de rotas
+    end motion_process.impl;
+
+    -- Implementação Completa do Sistema de Movimentação
+    system implementation motion_system.impl
+        subcomponents
+            proc: processor ARM_Cortex_A53;  -- Subcomponente processador
+            mem: memory Motion_Memory;  -- Memória para buffer de dados de movimentação
+            can_bus: bus CAN_Bus;  -- Barramento CAN
+            comm_process: process motion_process.impl;  -- Processo de movimentação
+        connections
+            proc_to_comm_process_can: bus access proc.can <-> comm_process.can_input;  -- Conexão entre processador e processo de movimentação (CAN)
+            comm_process_to_can_bus: port comm_process.can_output -> can_bus;  -- Conexão do processo de movimentação ao barramento CAN
+            comm_process_to_eth: port comm_process.eth_input -> MALA_Communication_System.communication_system.impl.ethernet_out;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (can_bus)) applies to proc_to_comm_process_can, comm_process_to_can_bus;
+            Scheduling_Protocol => (TDMA) applies to can_bus;  -- Protocolo de agendamento TDMA para o barramento
+            Communication_Properties::Output_Rate => [Value_Range => 8.0 .. 200.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.can_output;
+    end motion_system.impl;
+
+end MALA_Motion_System;

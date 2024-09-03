@@ -1,0 +1,98 @@
+package MALA_Charging_System
+public
+    with SEI;
+    with MALA_Communication_System;
+    with MALA_Power_System;
+    with MALA_Perception_System;
+    with MALA_Motion_System;
+    with MALA_Navigation_System;
+    with MALA_Cleaning_System;
+
+    -- Definição do Sistema de Carregamento
+    system charging_system
+        features
+            uart_in: in data port Charging_Command;  -- Porta de entrada para comandos via UART
+            uart_out: out data port Charging_Status;  -- Porta de saída para enviar status de carregamento via UART
+            eth_in: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::BlackboardCapacity => 64 Mbyte;  -- Capacidade do blackboard para dados de carregamento e status de bateria
+    end charging_system;
+
+    -- Definição do Data Frame para Comandos e Status de Carregamento
+    data Charging_Command
+        properties
+            Data_Size => 128 bytes;  -- Tamanho típico para comandos de carregamento
+    end Charging_Command;
+
+    data Charging_Status
+        properties
+            Data_Size => 64 bytes;  -- Tamanho típico para status de carregamento
+    end Charging_Status;
+
+    -- Definição do Processador PIC16F877A
+    processor PIC16F877A
+        features
+            uart: requires bus access UART_Bus;  -- Acesso ao barramento UART
+        properties
+            SEI::MIPSCapacity => 1.76 mips;  -- Capacidade do processador em MIPS
+    end PIC16F877A;
+
+    -- Definição do Barramento UART
+    bus UART_Bus
+        properties
+            SEI::BaudRate => 9600 Bd;  -- Baud rate do barramento UART
+            SEI::BandWidthCapacity => 9.6 kbps;  -- Capacidade do barramento UART
+            SEI::BandWidthBudget => 7.68 kbps;  -- Largura de banda alocada para comunicação com o sistema de alimentação
+    end UART_Bus;
+
+    -- Definição do Thread de Controle de Carregamento
+    thread charging_control_thread
+        features
+            charge_command_out: out data port Charging_Command;  -- Porta de saída para comandos de carregamento
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para controle de carregamento
+            Period => 8ms;  -- Período de execução do thread
+            Stack_Size => 1 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 4ms .. 10ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 0.5 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 1;  -- Prioridade alta para controle de carregamento
+    end charging_control_thread;
+
+    -- Definição do Processo de Carregamento
+    process charging_process
+        features
+            uart_input: in data port Charging_Command;   -- Porta de entrada UART para o processo
+            uart_output: out data port Charging_Status; -- Porta de saída UART do processo
+            eth_input: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::MIPSBudget => 1.0 mips;  -- Orçamento de MIPS para o processo
+    end charging_process;
+
+    -- Implementação do Processo de Carregamento
+    process implementation charging_process.impl
+        subcomponents
+            charge_thread: thread charging_control_thread;  -- Subcomponente thread de controle de carregamento
+        connections
+            charge_command_flow_out: port charge_thread.charge_command_out -> uart_output;  -- Conexão de saída de comandos de carregamento para o barramento UART
+            eth_data_flow_in: port eth_input -> charge_thread.charge_command_out;  -- Conexão de entrada de dados Ethernet para controle de carregamento
+    end charging_process.impl;
+
+    -- Implementação Completa do Sistema de Carregamento
+    system implementation charging_system.impl
+        subcomponents
+            proc: processor PIC16F877A;  -- Subcomponente processador
+            mem: memory Charging_Memory;  -- Memória para buffer de dados de carregamento e status
+            uart_bus: bus UART_Bus;  -- Barramento UART
+            comm_process: process charging_process.impl;  -- Processo de carregamento
+        connections
+            proc_to_comm_process_uart: bus access proc.uart <-> comm_process.uart_input;  -- Conexão entre processador e processo de carregamento (UART)
+            comm_process_to_uart_bus: port comm_process.uart_output -> uart_bus;  -- Conexão do processo de carregamento ao barramento UART
+            comm_process_to_eth: port comm_process.eth_input -> MALA_Communication_System.communication_system.impl.ethernet_out;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (uart_bus)) applies to proc_to_comm_process_uart, comm_process_to_uart_bus;
+            Scheduling_Protocol => (TDMA) applies to uart_bus;  -- Protocolo de agendamento TDMA para o barramento UART
+            Communication_Properties::Output_Rate => [Value_Range => 5.0 .. 50.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.uart_output;
+    end charging_system.impl;
+
+end MALA_Charging_System;

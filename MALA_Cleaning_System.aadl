@@ -1,0 +1,111 @@
+package MALA_Cleaning_System
+public
+    with SEI;
+    with MALA_Communication_System;
+    with MALA_Power_System;
+    with MALA_Perception_System;
+    with MALA_Motion_System;
+    with MALA_Navigation_System;
+
+    -- Definição do Sistema de Limpeza
+    system cleaning_system
+        features
+            spi_in: in data port Cleaning_Command;  -- Porta de entrada para comandos via SPI
+            spi_out: out data port Cleaning_Status;  -- Porta de saída para enviar status de limpeza via SPI
+            eth_in: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::BlackboardCapacity => 128 Mbyte;  -- Capacidade do blackboard para status de limpeza e comandos
+    end cleaning_system;
+
+    -- Definição do Data Frame para Comandos e Status de Limpeza
+    data Cleaning_Command
+        properties
+            Data_Size => 128 bytes;  -- Tamanho típico para comandos de limpeza
+    end Cleaning_Command;
+
+    data Cleaning_Status
+        properties
+            Data_Size => 64 bytes;  -- Tamanho típico para status de limpeza
+    end Cleaning_Status;
+
+    -- Definição do Processador Texas Instruments TMS320F28379D
+    processor TI_TMS320F28379D
+        features
+            spi: requires bus access SPI_Bus;  -- Acesso ao barramento SPI
+        properties
+            SEI::MIPSCapacity => 400 mips;  -- Capacidade do processador em MIPS
+    end TI_TMS320F28379D;
+
+    -- Definição do Barramento SPI
+    bus SPI_Bus
+        properties
+            SEI::BandWidthCapacity => 10.0 Mbps;  -- Capacidade do barramento SPI
+            SEI::BandWidthBudget => 8.0 Mbps;  -- Largura de banda alocada para comunicação com atuadores de limpeza
+    end SPI_Bus;
+
+    -- Definição do Thread de Controle de Aspiração
+    thread vacuum_control_thread
+        features
+            vacuum_command_out: out data port Cleaning_Command;  -- Porta de saída para comandos de aspiração
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para controle de aspiração
+            Period => 12ms;  -- Período de execução do thread
+            Stack_Size => 4 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 8ms .. 14ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 2.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 1;  -- Prioridade alta para controle de aspiração
+    end vacuum_control_thread;
+
+    -- Definição do Thread de Controle de Escovas
+    thread brush_control_thread
+        features
+            brush_command_out: out data port Cleaning_Command;  -- Porta de saída para comandos das escovas
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para controle das escovas
+            Period => 15ms;  -- Período de execução do thread
+            Stack_Size => 5 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 10ms .. 15ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 3.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 2;  -- Prioridade intermediária para controle das escovas
+    end brush_control_thread;
+
+    -- Definição do Processo de Limpeza
+    process cleaning_process
+        features
+            spi_input: in data port Cleaning_Command;   -- Porta de entrada SPI para o processo
+            spi_output: out data port Cleaning_Status; -- Porta de saída SPI do processo
+            eth_input: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::MIPSBudget => 6.0 mips;  -- Orçamento de MIPS para o processo
+    end cleaning_process;
+
+    -- Implementação do Processo de Limpeza
+    process implementation cleaning_process.impl
+        subcomponents
+            vacuum_thr: thread vacuum_control_thread;  -- Subcomponente thread de controle de aspiração
+            brush_thr: thread brush_control_thread;  -- Subcomponente thread de controle das escovas
+        connections
+            vacuum_command_flow_out: port vacuum_thr.vacuum_command_out -> spi_output;  -- Conexão de saída de comandos de aspiração para o barramento SPI
+            brush_command_flow_out: port brush_thr.brush_command_out -> spi_output;  -- Conexão de saída de comandos das escovas para o barramento SPI
+            eth_data_flow_in: port eth_input -> vacuum_thr.vacuum_command_out;  -- Conexão de entrada de dados Ethernet para controle de aspiração
+    end cleaning_process.impl;
+
+    -- Implementação Completa do Sistema de Limpeza
+    system implementation cleaning_system.impl
+        subcomponents
+            proc: processor TI_TMS320F28379D;  -- Subcomponente processador
+            mem: memory Cleaning_Memory;  -- Memória para buffer de comandos e status de limpeza
+            spi_bus: bus SPI_Bus;  -- Barramento SPI
+            comm_process: process cleaning_process.impl;  -- Processo de limpeza
+        connections
+            proc_to_comm_process_spi: bus access proc.spi <-> comm_process.spi_input;  -- Conexão entre processador e processo de limpeza (SPI)
+            comm_process_to_spi_bus: port comm_process.spi_output -> spi_bus;  -- Conexão do processo de limpeza ao barramento SPI
+            comm_process_to_eth: port comm_process.eth_input -> MALA_Communication_System.communication_system.impl.ethernet_out;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (spi_bus)) applies to proc_to_comm_process_spi, comm_process_to_spi_bus;
+            Scheduling_Protocol => (TDMA) applies to spi_bus;  -- Protocolo de agendamento TDMA para o barramento SPI
+            Communication_Properties::Output_Rate => [Value_Range => 10.0 .. 500.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.spi_output;
+    end cleaning_system.impl;
+
+end MALA_Cleaning_System;

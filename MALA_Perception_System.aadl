@@ -1,0 +1,112 @@
+package MALA_Perception_System
+public
+    with SEI;
+    with MALA_Communication_System;
+    with MALA_Power_System;
+
+    -- Definição do Sistema de Percepção
+    system perception_system
+        features
+            i2c_in: in data port Perception_Data;  -- Porta de entrada para dados de sensores via I2C
+            spi_in: in data port Perception_Data;  -- Porta de entrada para dados de sensores via SPI
+            eth_out: out data port Ethernet_Frame;  -- Porta de saída Ethernet para comunicação com outros subsistemas
+        properties
+            SEI::BlackboardCapacity => 256 Mbyte;  -- Capacidade do blackboard para dados de percepção
+    end perception_system;
+
+    -- Definição do Data Frame para Dados de Percepção
+    data Perception_Data
+        properties
+            Data_Size => 1024 bytes;  -- Tamanho típico de um quadro de dados de percepção
+    end Perception_Data;
+
+    -- Definição do Processador NXP i.MX 6Quad
+    processor NXP_iMX_6Quad
+        features
+            i2c: requires bus access I2C_Bus;  -- Acesso ao barramento I2C
+            spi: requires bus access SPI_Bus;  -- Acesso ao barramento SPI
+        properties
+            SEI::MIPSCapacity => 2.4 GOPS;  -- Capacidade do processador em Giga Operações por Segundo
+    end NXP_iMX_6Quad;
+
+    -- Definição do Barramento I2C
+    bus I2C_Bus
+        properties
+            SEI::BandWidthCapacity => 400 kHz;  -- Capacidade do barramento I2C
+            SEI::BandWidthBudget => 300 kHz;  -- Largura de banda alocada para comunicação de dados de sensores
+    end I2C_Bus;
+
+    -- Definição do Barramento SPI
+    bus SPI_Bus
+        properties
+            SEI::BandWidthCapacity => 10.0 Mbps;  -- Capacidade do barramento SPI
+            SEI::BandWidthBudget => 8.0 Mbps;  -- Largura de banda alocada para comunicação de dados de alta velocidade
+    end SPI_Bus;
+
+    -- Definição do Thread LIDAR
+    thread lidar_thread
+        features
+            lidar_data_out: out data port Perception_Data;  -- Porta de saída para enviar dados LIDAR
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para coletar dados do LIDAR
+            Period => 10ms;  -- Período de execução do thread
+            Stack_Size => 6 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 7ms .. 12ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 0.5 GOPS;  -- Capacidade MIPS alocada para o thread
+            Priority => 1;  -- Prioridade alta para dados críticos
+    end lidar_thread;
+
+    -- Definição do Thread Guia Inercial
+    thread inertial_guide_thread
+        features
+            inertial_data_out: out data port Perception_Data;  -- Porta de saída para enviar dados inerciais
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para coletar dados inerciais
+            Period => 8ms;  -- Período de execução do thread
+            Stack_Size => 4 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 5ms .. 10ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 0.3 GOPS;  -- Capacidade MIPS alocada para o thread
+            Priority => 2;  -- Prioridade intermediária
+    end inertial_guide_thread;
+
+    -- Definição do Processo de Percepção
+    process perception_process
+        features
+            i2c_input: in data port Perception_Data;   -- Porta de entrada I2C para o processo
+            spi_input: in data port Perception_Data;   -- Porta de entrada SPI para o processo
+            eth_output: out data port Ethernet_Frame; -- Porta de saída Ethernet para comunicação
+        properties
+            SEI::MIPSBudget => 1.2 GOPS;  -- Orçamento de MIPS para o processo
+    end perception_process;
+
+    -- Implementação do Processo de Percepção
+    process implementation perception_process.impl
+        subcomponents
+            lidar_thr: thread lidar_thread;  -- Subcomponente thread LIDAR
+            inertial_thr: thread inertial_guide_thread;  -- Subcomponente thread Guia Inercial
+        connections
+            lidar_data_flow_out: port lidar_thr.lidar_data_out -> eth_output;  -- Conexão de saída de dados LIDAR para comunicação Ethernet
+            inertial_data_flow_out: port inertial_thr.inertial_data_out -> eth_output;  -- Conexão de saída de dados inerciais para comunicação Ethernet
+    end perception_process.impl;
+
+    -- Implementação Completa do Sistema de Percepção
+    system implementation perception_system.impl
+        subcomponents
+            proc: processor NXP_iMX_6Quad;  -- Subcomponente processador
+            mem: memory Perception_Memory;  -- Memória para buffer de dados de percepção
+            i2c_bus: bus I2C_Bus;  -- Barramento I2C
+            spi_bus: bus SPI_Bus;  -- Barramento SPI
+            comm_process: process perception_process.impl;  -- Processo de percepção
+        connections
+            proc_to_comm_process_i2c: bus access proc.i2c <-> comm_process.i2c_input;  -- Conexão entre processador e processo de percepção (I2C)
+            proc_to_comm_process_spi: bus access proc.spi <-> comm_process.spi_input;  -- Conexão entre processador e processo de percepção (SPI)
+            comm_process_to_eth: port comm_process.eth_output -> MALA_Communication_System.communication_system.impl.ethernet_in;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (i2c_bus)) applies to proc_to_comm_process_i2c;
+            Actual_Connection_Binding => (reference (spi_bus)) applies to proc_to_comm_process_spi;
+            Scheduling_Protocol => (TDMA) applies to i2c_bus, spi_bus;  -- Protocolo de agendamento TDMA para os barramentos
+            Communication_Properties::Output_Rate => [Value_Range => 20.0 .. 500.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.eth_output;
+    end perception_system.impl;
+
+end MALA_Perception_System;

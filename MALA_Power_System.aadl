@@ -1,0 +1,100 @@
+package MALA_Power_System
+public
+    with SEI;
+    with MALA_Communication_System;
+
+    -- Definição do Sistema de Alimentação
+    system power_system
+        features
+            i2c_in: in data port Power_Status;  -- Porta de entrada para receber comandos e dados via I2C
+            i2c_out: out data port Power_Status;  -- Porta de saída para enviar status de energia via I2C
+            eth_out: out data port Ethernet_Frame;  -- Porta de saída Ethernet para reportar status ao sistema de comunicação
+        properties
+            SEI::BlackboardCapacity => 64 Kbyte;  -- Capacidade do blackboard para status de energia e logs
+    end power_system;
+
+    -- Definição do Data Frame para Status de Energia
+    data Power_Status
+        properties
+            Data_Size => 64 bytes;  -- Tamanho típico para status de energia
+    end Power_Status;
+
+    -- Definição do Processador STM32F103
+    processor STM32F103
+        features
+            i2c: requires bus access I2C_Bus;  -- Acesso ao barramento I2C
+        properties
+            SEI::MIPSCapacity => 0.5 mips;  -- Capacidade do microcontrolador
+    end STM32F103;
+
+    -- Definição do Barramento I2C
+    bus I2C_Bus
+        properties
+            SEI::BandWidthCapacity => 1.0 Mbps;  -- Capacidade do barramento I2C
+            SEI::BandWidthBudget => 0.5 Mbps;  -- Largura de banda alocada para comunicação de status de energia
+    end I2C_Bus;
+
+    -- Definição do Thread de Monitoramento de Bateria
+    thread battery_monitoring_thread
+        features
+            status_out: out data port Power_Status;  -- Porta de saída para enviar status da bateria
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para monitorar a bateria
+            Period => 5ms;  -- Período de execução do thread
+            Stack_Size => 2 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 3ms .. 8ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 0.2 mips;  -- Capacidade MIPS alocada para o thread
+    end battery_monitoring_thread;
+
+    -- Definição do Thread de Gestão de Carregamento
+    thread charging_management_thread
+        features
+            charge_control: in data port Power_Status;  -- Porta de entrada para receber comandos de carregamento
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para gerenciar o carregamento
+            Period => 10ms;  -- Período de execução do thread
+            Stack_Size => 3 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 5ms .. 10ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 0.3 mips;  -- Capacidade MIPS alocada para o thread
+    end charging_management_thread;
+
+    -- Definição do Processo de Alimentação
+    process power_management_process
+        features
+            i2c_input: in data port Power_Status;   -- Porta de entrada I2C para o processo
+            i2c_output: out data port Power_Status; -- Porta de saída I2C do processo
+            eth_output: out data port Ethernet_Frame; -- Porta de saída Ethernet para comunicação
+        properties
+            SEI::MIPSBudget => 0.4 mips;  -- Orçamento de MIPS para o processo
+    end power_management_process;
+
+    -- Implementação do Processo de Alimentação
+    process implementation power_management_process.impl
+        subcomponents
+            battery_thread: thread battery_monitoring_thread;  -- Subcomponente thread de monitoramento de bateria
+            charge_thread: thread charging_management_thread;  -- Subcomponente thread de gestão de carregamento
+        connections
+            i2c_data_flow_in: port i2c_input -> charge_thread.charge_control;  -- Conexão de entrada de dados I2C
+            i2c_data_flow_out: port battery_thread.status_out -> i2c_output;  -- Conexão de saída de dados I2C
+            eth_data_flow_out: port battery_thread.status_out -> eth_output;  -- Conexão de saída de dados Ethernet para comunicação
+    end power_management_process.impl;
+
+    -- Implementação Completa do Sistema de Alimentação
+    system implementation power_system.impl
+        subcomponents
+            proc: processor STM32F103;  -- Subcomponente processador
+            mem: memory Power_Memory;  -- Memória para logs de energia
+            i2c_bus: bus I2C_Bus;  -- Barramento I2C
+            comm_process: process power_management_process.impl;  -- Processo de gerenciamento de energia
+        connections
+            proc_to_comm_process: bus access proc.i2c <-> comm_process.i2c_input;  -- Conexão entre processador e processo de alimentação
+            comm_process_to_i2c_bus: port comm_process.i2c_output -> i2c_bus;  -- Conexão do processo de alimentação ao barramento I2C
+            comm_process_to_eth: port comm_process.eth_output -> MALA_Communication_System.communication_system.impl.ethernet_in;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (i2c_bus)) applies to proc_to_comm_process, comm_process_to_i2c_bus;
+            Scheduling_Protocol => (TDMA) applies to i2c_bus;  -- Protocolo de agendamento TDMA para o barramento
+            Communication_Properties::Output_Rate => [Value_Range => 5.0 .. 100.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.eth_output;
+    end power_system.impl;
+
+end MALA_Power_System;

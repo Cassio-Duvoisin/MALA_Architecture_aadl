@@ -1,0 +1,106 @@
+package MALA_Navigation_System
+public
+    with SEI;
+    with MALA_Communication_System;
+    with MALA_Power_System;
+    with MALA_Perception_System;
+    with MALA_Motion_System;
+
+    -- Definição do Sistema de Navegação
+    system navigation_system
+        features
+            pcie_in: in data port Navigation_Data;  -- Porta de entrada para dados de navegação via PCIe
+            pcie_out: out data port Navigation_Data;  -- Porta de saída para enviar rotas e dados via PCIe
+            eth_in: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::BlackboardCapacity => 512 Mbyte;  -- Capacidade do blackboard para dados de navegação, mapas e rotas
+    end navigation_system;
+
+    -- Definição do Data Frame para Dados de Navegação
+    data Navigation_Data
+        properties
+            Data_Size => 512 bytes;  -- Tamanho típico para dados de navegação
+    end Navigation_Data;
+
+    -- Definição do Processador Qualcomm Snapdragon 410
+    processor Qualcomm_Snapdragon_410
+        features
+            pcie: requires bus access PCIe_Bus;  -- Acesso ao barramento PCIe
+        properties
+            SEI::MIPSCapacity => 10.0 mips;  -- Capacidade do processador em MIPS
+            SEI::SIMDSupport => true;  -- Suporte a SIMD para otimizações de cálculo
+    end Qualcomm_Snapdragon_410;
+
+    -- Definição do Barramento PCIe Gen 2
+    bus PCIe_Bus
+        properties
+            SEI::BandWidthCapacity => 5 GT/s;  -- Capacidade do barramento PCIe
+            SEI::BandWidthBudget => 4 GT/s;  -- Largura de banda alocada para comunicação de alta velocidade
+    end PCIe_Bus;
+
+    -- Definição do Thread de Localização
+    thread localization_thread
+        features
+            location_data_out: out data port Navigation_Data;  -- Porta de saída para dados de localização
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para atualizar a localização
+            Period => 15ms;  -- Período de execução do thread
+            Stack_Size => 12 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 10ms .. 20ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 4.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 1;  -- Prioridade alta para atualizações de localização
+    end localization_thread;
+
+    -- Definição do Thread de Roteamento
+    thread routing_thread
+        features
+            route_data_out: out data port Navigation_Data;  -- Porta de saída para dados de roteamento
+        properties
+            Dispatch_Protocol => periodic;  -- Despacho periódico para cálculo de rotas
+            Period => 25ms;  -- Período de execução do thread
+            Stack_Size => 16 Kbyte;  -- Tamanho da pilha para o thread
+            Compute_Execution_Time => 15ms .. 30ms;  -- Tempo de execução estimado
+            SEI::MIPSBudget => 6.0 mips;  -- Capacidade MIPS alocada para o thread
+            Priority => 2;  -- Prioridade intermediária para cálculos de rota
+    end routing_thread;
+
+    -- Definição do Processo de Navegação
+    process navigation_process
+        features
+            pcie_input: in data port Navigation_Data;   -- Porta de entrada PCIe para o processo
+            pcie_output: out data port Navigation_Data; -- Porta de saída PCIe do processo
+            eth_input: in data port Ethernet_Frame;  -- Porta de entrada Ethernet para receber dados do sistema de comunicação
+        properties
+            SEI::MIPSBudget => 8.0 mips;  -- Orçamento de MIPS para o processo
+    end navigation_process;
+
+    -- Implementação do Processo de Navegação
+    process implementation navigation_process.impl
+        subcomponents
+            localization_thr: thread localization_thread;  -- Subcomponente thread de localização
+            routing_thr: thread routing_thread;  -- Subcomponente thread de roteamento
+        connections
+            location_data_flow_out: port localization_thr.location_data_out -> pcie_output;  -- Conexão de saída de dados de localização para o barramento PCIe
+            route_data_flow_out: port routing_thr.route_data_out -> pcie_output;  -- Conexão de saída de dados de rotas para o barramento PCIe
+            eth_data_flow_in: port eth_input -> localization_thr.location_data_out;  -- Conexão de entrada de dados Ethernet para atualização de localização
+    end navigation_process.impl;
+
+    -- Implementação Completa do Sistema de Navegação
+    system implementation navigation_system.impl
+        subcomponents
+            proc: processor Qualcomm_Snapdragon_410;  -- Subcomponente processador
+            mem: memory Navigation_Memory;  -- Memória para armazenamento de mapas e rotas
+            pcie_bus: bus PCIe_Bus;  -- Barramento PCIe
+            comm_process: process navigation_process.impl;  -- Processo de navegação
+        connections
+            proc_to_comm_process_pcie: bus access proc.pcie <-> comm_process.pcie_input;  -- Conexão entre processador e processo de navegação (PCIe)
+            comm_process_to_pcie_bus: port comm_process.pcie_output -> pcie_bus;  -- Conexão do processo de navegação ao barramento PCIe
+            comm_process_to_eth: port comm_process.eth_input -> MALA_Communication_System.communication_system.impl.ethernet_out;  -- Conexão ao sistema de comunicação
+        properties
+            Actual_Connection_Binding => (reference (pcie_bus)) applies to proc_to_comm_process_pcie, comm_process_to_pcie_bus;
+            Scheduling_Protocol => (TDMA) applies to pcie_bus;  -- Protocolo de agendamento TDMA para o barramento PCIe
+            Communication_Properties::Output_Rate => [Value_Range => 10.0 .. 500.0;
+                                                      Rate_Unit => PerSecond;] applies to comm_process.pcie_output;
+    end navigation_system.impl;
+
+end MALA_Navigation_System;
